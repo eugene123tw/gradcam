@@ -9,7 +9,8 @@ from data_utils import prep_image, visualize
 
 @ops.RegisterGradient("GuidedRelu")
 def _GuidedReluGrad(op, grad):
-    return tf.where(0. < grad, gen_nn_ops.relu_grad(grad, op.outputs[0]), tf.zeros(grad.get_shape()))
+    dtype = op.inputs[0].dtype
+    return grad * tf.cast(grad > 0., dtype) * tf.cast(op.inputs[0] > 0., dtype)
 
 
 def GradCam(image_path, meta_path):
@@ -23,44 +24,45 @@ def GradCam(image_path, meta_path):
 
     trained_model_graph = tf.Graph()
     with trained_model_graph.as_default():
-        # with trained_model_graph.gradient_override_map({'Relu': 'GuidedRelu'}):
-        sess = tf.Session()
-        new_saver = tf.train.import_meta_graph(meta_path)
-        new_saver.restore(sess, ckpt_file)
+        with trained_model_graph.gradient_override_map({'Relu': 'GuidedRelu'}):
+            sess = tf.Session()
+            new_saver = tf.train.import_meta_graph(meta_path)
+            new_saver.restore(sess, ckpt_file)
 
-        images_ph = tf.get_default_graph().get_tensor_by_name("image_batch:0")
-        labels_ph = tf.get_default_graph().get_tensor_by_name("labels:0")
-        phase_train_ph = tf.get_default_graph().get_tensor_by_name("phase_train:0")
-        pred_probs = tf.get_default_graph().get_tensor_by_name("prediction:0")
-        logits_ph = tf.get_default_graph().get_tensor_by_name("logits/BiasAdd:0")
-        target_conv_layer = tf.get_default_graph().get_tensor_by_name("InceptionResnetV1/Logits/AvgPool_1a_8x8/AvgPool:0")
+            images_ph = tf.get_default_graph().get_tensor_by_name("image_batch:0")
+            labels_ph = tf.get_default_graph().get_tensor_by_name("labels:0")
+            phase_train_ph = tf.get_default_graph().get_tensor_by_name("phase_train:0")
+            pred_probs = tf.get_default_graph().get_tensor_by_name("prediction:0")
+            logits_ph = tf.get_default_graph().get_tensor_by_name("logits/BiasAdd:0")
+            target_conv_layer = tf.get_default_graph().get_tensor_by_name("InceptionResnetV1/Repeat_1/block17_10/Relu:0")
 
-        cost = (-1) * tf.reduce_sum(tf.multiply(labels_ph, tf.log(pred_probs)), axis=1)
-        y_c = tf.reduce_sum(tf.multiply(logits_ph, labels_ph), axis=1)
-        target_conv_layer_grad = tf.gradients(y_c, target_conv_layer)[0]
+            loss = tf.losses.softmax_cross_entropy(labels_ph, logits_ph)
 
-        # Guided backpropagtion back to input layer
-        gb_grad = tf.gradients(cost, images_ph)[0]
+            target_conv_layer_grad = tf.gradients(loss, target_conv_layer)[0]
 
-        prob = sess.run(pred_probs, feed_dict={images_ph: input_img, phase_train_ph:False})
+            # Guided backpropagtion back to input layer
+            gb_grad = tf.gradients(loss, images_ph)[0]
 
-        gb_grad_value, target_conv_layer_value, target_conv_layer_grad_value = sess.run(
-            [gb_grad, target_conv_layer, target_conv_layer_grad],
-            feed_dict={images_ph: input_img, labels_ph: [[0, 1]], phase_train_ph:False})
+            prob = sess.run(pred_probs, feed_dict={images_ph: input_img, phase_train_ph:False})
+
+            gb_grad_value, target_conv_layer_value, target_conv_layer_grad_value = sess.run(
+                [gb_grad, target_conv_layer, target_conv_layer_grad],
+                feed_dict={images_ph: input_img, labels_ph: [[1, 0]], phase_train_ph:False})
 
 
-        gradBGR = gb_grad_value[0]
-        gradRGB = np.dstack((
-            gradBGR[:, :, 2],
-            gradBGR[:, :, 1],
-            gradBGR[:, :, 0],
-        ))
-        visualize(img, target_conv_layer_value[0], target_conv_layer_grad_value[0], gradRGB)
+            gradBGR = gb_grad_value[0]
+            gradRGB = np.dstack((
+                gradBGR[:, :, 2],
+                gradBGR[:, :, 1],
+                gradBGR[:, :, 0],
+            ))
+            print(prob)
+            visualize(img, target_conv_layer_value[0], target_conv_layer_grad_value[0], gradRGB)
 
 
 
 if __name__ == '__main__':
-    image_path = '/home/eugene/_DATASETS/test_face/out/dr_janet_bastiman_colour.jpeg'
+    image_path = '/home/eugene/_DATASETS/Face/AGFW_cropped/128/female/age_45_49/14870.jpg'
     meta_path = '/home/eugene/git/gender-classifier/checkpoint/model.ckpt-3.meta'
 
     GradCam(image_path, meta_path)
