@@ -58,7 +58,7 @@ def GradCam(image_path, meta_path):
 
 
 if __name__ == '__main__':
-    image_path = '/home/eugene/Desktop/test/sophia.jpeg'
+    image_path = '/home/eugene/Desktop/test/thispersondoesnotexist_good4.jpeg'
     meta_path = '/home/eugene/git/gender-classifier/checkpoint/model.ckpt-3.meta'
 
     GradCam(image_path, meta_path)
